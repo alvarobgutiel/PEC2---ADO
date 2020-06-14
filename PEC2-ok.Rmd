@@ -1,0 +1,776 @@
+---
+title: |
+  | **Prueba de Evaluación Continua 2 - RNA-seq analysis**
+subtitle: "Análisis de datos ómicos" 
+author: "Álvaro Ballesteros González"
+date: "Junio 2020"
+output:
+  html_document:
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  pdf_document:
+    keep_tex: yes
+    toc: yes
+    toc_depth: 3
+    latex_engine: xelatex
+editor_options: 
+  chunk_output_type: console
+link-citations: yes
+bibliography: "./pec2-bibliography.bib"
+nocite: '@*'
+---
+
+\newpage
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,cache=TRUE)
+````
+
+````{undefined include=FALSE}
+library(dplyr)
+library(magrittr)
+library(tidyverse)
+library(stringr)
+library(ggplot2)
+require(DESeq2)
+library(GenomeInfoDb)
+library(GenomeInfoDbData)
+library(vsn)
+library(viridis)
+library(AnnotationDbi)
+library(org.Hs.eg.db)
+library(systemPipeR)
+library(knitr)
+library(kableExtra)
+library(pheatmap)
+library(RColorBrewer)
+library(enrichplot)
+
+```
+
+En este informe, correspondiente a la PEC2 de la asignatura Análisis de datos ómicos del Máster de Bioinformática y Bioestadística de la Universitat Oberta de Catalunya, vamos a presentar un informe de evaluación de los resultados obtenidos en el análisis de datos derivados del repositorio GTEx de un estudio de RNA-seq centrado en el análisis del tiroides en donde se compara tres tipos de infiltración medido en un total de 292 muestras, divididas en los siguientes tres grupos: (Not infiltrated tissues (NIT); Small focal infiltrates (SFI); Extensive lymphoid infiltrates (ELI)). A partir de la población total, vamos a seleccionar 10 muestras aleatorias de cada tipo de infiltración, formando una subpoblación total de 30 muestras. 
+
+# 1. Abstract
+
+El análisis transcriptómico de muestras humanas ha permitido conocer los patrones de expresión de muestras aisladas asoaciadas a patologías concretas para lograr entender cómo la expresión génica afecta a la regulación de procesos fisiológicos concretos. La tiroides, implicada en múltiples procesos hormonales y metabólicos, se encuentra afectada en múltiples patologías. Sin embargo, el perfil transcriptómico de esta glándula todavía permanece desconocido. En este estudio se han analizado muestras de tiroides de tres tipos de pacientes, en función de la infiltración que estos muestren, a través de un estudio de RNA-sequencing comparando los perfiles de expresión entre los diferentes grupos estudiados. 
+
+# 2. Objetivos
+
+El objetivo de este estudio es conocer el perfil transcriptómico de tres poblaciones diferentes de muestras biológicas de pacientes con diferentes patrones de infiltración en la glándula tiroidea. Además, se pretende conocer las diferencias a nivel transcripcional de los diferentes grupos estudiados, para conocer qué rutas biológicas están afectadas de acuerdo a las diferencias en los patrones de expresión encontrados en los grupos analizados. 
+
+# 3. Materiales y métodos
+
+## Datos utilizados en el análisis
+
+Los datos utilizados en este análisis derivan del repositorio público GTEx, que contiene gran cantidad de datos analizados de tejidos humanos específicos, con el objetivo de esclarecer patrones de expresión específicas de tejidos concretos a partir de muestras no patológicas. En el repositorio hay datos de 54 tejidos recogidos en más de 1000 pacientes. Con estas muestras se han hecho análisis de WES, WGS y RNA-seq. 
+
+Para este estudio nos vamos a centrar en el análisis de muestras derivadas de biopsias de glándulas tiroideas de pacientes sanos, con diferentes tipos de infiltración (Not infiltrated tissues (NIT); Small focal infiltrates (SFI); Extensive lymphoid infiltrates (ELI)). Se estudiaron un total de 292 muestras de pacientes, divididos de manera heterogénea entre los tres grupos. Se pidió una selección aleatoria de 10 pacientes por cada grupo de infiltración, formando una población de estudio de 30 pacientes distribuidos homogéneamente entre los tres grupos de análisis. 
+
+Una vez seleccionada la subpoblación de 30 muestras aleatorias, se estudiaron las características de los pacientes seleccionados. La nueva población está formada por 14 mujeres y 16 hombres. Y como hemos comentado anteriormente, para cada uno de los grupos hay 10 pacientes asignados. 
+
+Los datos facilitados para el estudio están definidos por dos archivos .csv, con la información tanto de los counts de cada gen por cada paciente (`counts.csv`), como los metadatos asociados a cada paciente analizado (`targets.csv`). Los counts facilitados no están normalizados y son crudos tal y como podemos encontrar en el repositorio GTEx. Por lo tanto, partimos directamente de un dataset con los conteos asignados a cada gen y a cada paciente, por lo que no tenemos que realizar los pasos anteriores de preprocesado de los datos que derivan directamente del secuenciado de las muestras. 
+
+El experimento llevado a cabo para este análisis es de tipo RNA-sequencing, donde se ha obtenido el patrón de expresión transcripcional de cada paciente, asignando los niveles de expresión por counts para cada gen analizado y para cada paciente analizado. El diseño experimental del estudio está basado en un análisis diferencial entre las poblaciones definidas previamente, en función del tipo de infiltración de cada paciente. En primer lugar, se asumirá que el grupo Not infiltrated tissues (NIT) es el grupo control, comparándolo con los otros dos grupos del estudio, para observar diferencias de expresión entre el grupo control y los dos grupos con infiltraciones. Finalmente, también se hará el análisis comparativo de los dos grupos con infiltración para observar diferencias entre ellos. Además, es un análisis donde la población ha sido escogida totalmente aleatoria para cada grupo, por lo que no hay sesgos que determinen los resultados obtenidos. 
+
+## Métodos utilizados en el análisis de los datos
+
+Para el análisis de los datos de este estudio se han utilizado diferentes paquetes de la plataforma de paquetes  bioinformáticos de R Bioconductor, y el software de análsis informático Rstudio (versión 3.6.1). Para obtener los resultados a partir de los datos facilitados, se ha seguido el siguiente workflow:
+
+0. Selección aleatoria de las muestras. 
+1. Preprocesado de los datos: filtraje y normalización.
+2. Identificación de genes diferencialmente expresados.
+3. Anotación de los resultados.
+4. Búsqueda de patrones de expresión y agrupación de las muestras (comparación entre las distintas comparaciones).
+5. Análisis de significación biológica (“Gene Enrichment Analysis”).
+
+Para cada uno de estos pasos se utilizarán diferentes paquetes de Bioconductor. 
+
+### Selección aleatoria de las muestras
+
+Para la selección aleatoria de las muestras, se utilizó la función `sample` del paquete `base` de R, que permite seleccionar un número concreto de muestras aleatorias entre un conjunto de datos. Para poder hacer reproducible el estudio, se utilizó una semilla de aleatorización con la función `set.seed()`. El método de selección se especifica en el apartado de métodos de este informe.
+
+### Preprocesado, filtrado y normalización.
+
+Tras seleccionar las muestras de manera aleatoria, crearemos un objeto de tipo DESeqDataSet con los datos y metadatos facilitados. A continuación, se hará una exploración de los datos a través de diferentes gráficos con R (boxplot e histograma) con `ggplot2`. Tras esto, se filtrarán los genes que no se hayan detectado en ningún paciente. Por último, se transformarán los datos para estabilizar la varianza de la expresión de los genes con la función `vst()` del paquete `DESeq2`.
+
+### Expresión diferencial de genes.
+
+Tras el preprocesado de los datos, se procederá a realizar el análisis de expresión diferencial entre los grupos definidos en el estudio con el paquete `DESeq2`. Este paquete permite comparar la expresión diferencial de genes entre dos poblaciones, considerando una de ellas como control. Así, se obtienen los valores logFoldChange para cada gen, que indica el ratio de expresión de cada gen entre el grupo control y el grupo interrogado. Además, permite la corrección del p-value por el método de false discovery rate (FDR). Para mostrar los resultados de manera visual, se utilizaron también representaciones de tipo volcano plot con el paquete `ggplot`. 
+
+### Anotación de los resultados. 
+
+Los datos están originalmente anotados siguiendo la anotación de la base de datos ENSEMBL. Esta anotación es poco informativa, pues no utiliza una anotación donde los genes se nombren con terminología común, si no con una combinación de códigos numéricos asociados a esos genes. Por tanto, es interesante anotar los genes con otras anotaciones disponibles, utilizando paquetes de anotación disponibles en Bioconductor (`AnnotationDbi`), como `org.Hs.eg.db`. Se anotaron tanto con la anotación propia de la NCBI (Entrez gene ID) como para Gene Symbol. 
+
+### Búsqueda de patrones de expresión y agrupación de muestras. 
+
+Para comprobar la agrupación de las muestras en función de los patrones de expresión de cada una de ellas, realizamos un dimensionality reduction tipo PCA con la función `plotPCA` de DESeq2 y de tipo multidimensional scalling (MDS) con la `ggplot2`. Para ver qué genes están alterados de manera común entre las distintas comparaciones realizadas, se utilizaró un diagrama de Venn con la función `vennDiagram` del paquete `limma`.
+
+### Análsis de significación biológica ("Gene Set Enrichment Analysis")
+
+Para la anotación funcional, utilizamos el paquete `clusterProfiler`, en concreto la función `enrichGO` para realizar el GSEA a partir del listado de genes significativamente alterados. Esta función analizar las funciones derivadas de la Gene Ontology (GO). Para la representación de las funciones más alterados, utilizamos la función `dotplot` del paquet `enrichplot`. 
+
+# 4. Resultados
+
+Procedemos ahora a mostrar los resultados obtenidos del análisis realizado para esta PEC. En primer lugar, tal y como indica el enunciado del ejercicio, tenemos que seleccionar una muestra aleatoria de 10 pacientes de cada grupo definido por el estudio. Estos 30 pacientes formarán la población de estudio para los próximos pasos. 
+
+```{r datos, include=FALSE, results=FALSE}
+
+counts = read.csv(file = "./counts.csv",sep=";")
+targets = read.csv(file="./targets.csv",sep=",")
+
+rownames(counts) = counts$X
+counts = counts[-1]
+
+targets$Sample_Name = gsub("-",".",targets$Sample_Name)
+rownames(targets) = targets$Sample_Name
+
+````
+
+Una vez cargados los datos facilitados por el enunciado, procedemos a seleccionar la muestra aleatoria. Para hacer reproducible el ejercicio, fijamos la aleatorización con la función `set.seed()`. Tras estos, seleccionamos los diferentes grupos definidos según la variable Group y con la función `sample` del paquete básico de R, seleccionamos 10 individuos de cada una de las poblaciones. Dado que la nomenclatura de los individuos para el archivo `targets.csv` y para el archivo `counts.csv` no es la misma, sustituimos el valor "-" por "." en los nombres seleccionados aleatoriamente para poder seleccionarlos del dataset `counts`. La función `as.character()` nos permite transformar las listas generadas por la función `sample` a una consecución de caracteres para después facilitar la selección del dataset `counts`. 
+
+```{r seed, echo = T, results = 'hide'}
+
+set.seed(12345)
+
+select_NIT = targets[targets$Group == "NIT",]
+random_NIT = as.character(sample(select_NIT$Sample_Name,10))
+
+select_ELI = targets[targets$Group == "ELI",]
+random_ELI = as.character(sample(select_ELI$Sample_Name,10))
+
+select_SFI = targets[targets$Group == "SFI",]
+random_SFI = as.character(sample(select_SFI$Sample_Name,10))
+
+````
+
+Una vez seleccionados los nombres de los pacientes aleatorios, los juntamos en una única consecución de los nombres en modo `character`:
+
+````{r all select,include=FALSE}
+
+all_select = c(random_NIT,random_ELI,random_SFI)
+
+````
+
+Por último, seleccionamos únicamente las columnas del dataset `counts` correspondientes a los pacientes definidos en la variable `all_select`. Además, seleccionamos todas las filas, que corresponden con los valores de los genes para cada paciente:
+
+```{r subset,echo = T, results = 'hide'}
+
+counts_sel = counts[all_select]
+counts_sel = counts_sel[,order(colnames(counts_sel))]
+counts_sel = as.matrix(counts_sel)
+targets_sel = targets[rownames(targets) %in% all_select,]
+
+```` 
+
+Una vez tenemos los datos de los pacientes seleccionados, podemos proceder al análisis RNA-seq para estos datos. En primer lugar, realizamos el preprocesado de los datos, que incluye el filtraje y la normalización. Obtenemos un objeto tipo DESeqDataSet con los conteos y los metadata facilitados por el enunciado y seleccionados en el apartado anterior. Aplicamos un diseño considerando la variable `Group` de cada individuo analizado.
+
+```{r filtering, include=FALSE}
+
+ddsMat = DESeq2::DESeqDataSetFromMatrix (countData = counts_sel,
+                                  colData = targets_sel,
+                                  design = ~ Group)
+
+````
+
+Realizamos un prefriltrado de los datos y eliminamos los genes cuyos conteos totales sean cero. Antes del filtrado, el número de genes analizados era de 56202.
+
+```{r filtrado, include=FALSE}
+dds = ddsMat[rowSums(DESeq2::counts(ddsMat)) > 1, ]
+````
+
+Así, eliminamos un total de 12915 genes que no tenían conteos asignados para ninguna células, y continuamos el análisis con 43287 genes. Vemos la distribución de los conteos para cada paciente analizado con un gráfico boxplot y con un histograma de densidad. Tranformamos los conteos a logaritmo de base 10 para poder representar mejor los datos:
+
+```{r boxplot1, echo=FALSE, message=FALSE}
+
+df = log2(DESeq2::counts(dds) + 1)
+df = reshape2::melt(df, variable_name = "Samples")
+targets_cond = data.frame(Var2 = targets_sel$Sample_Name,Group = targets_sel$Group)
+
+df_mer = plyr::join(df,targets_cond,by="Var2")
+
+ggplot2::ggplot(df_mer, ggplot2::aes(x = Group,y=value,fill=Group)) + ggplot2::geom_boxplot() + ggplot2::xlab("Muestras") + ggplot2::ylab(expression(log[2](count + 1))) + ggplot2::theme(axis.title.x=element_blank(),axis.text.x=element_blank(), axis.ticks.x=element_blank()) + viridis::scale_fill_viridis(discrete=TRUE)
+
+ggplot2::ggplot(df_mer, ggplot2::aes(x = value, colour = Group, fill=Group)) + ggplot2::ylim(c(0, 0.25)) +
+ggplot2::geom_density(alpha = 0.2, size = 1.25) + ggplot2::facet_wrap(~ Group) + 
+ggplot2::theme(legend.position = "top") + ggplot2::xlab(expression(log[2](count + 1)))
+
+````
+
+Vemos cómo los tres grupos se distribuyen de una manera bastante homogénea, habiendo un gran porcentaje de genes con muy pocos conteos, lo que podría afectar a los resultados finales. Sin embargo, los consideraremos en el estudio. 
+
+Como se trata de un dataset que podríamos considerar de tamaño mediano-grande (30 muestras o menos), vamos a aplicar una transformación para estabilizar la varianza de la expresión de los genes con la funicón `vst()` y así normalizar los counts respecto al tamaño de la librería. 
+
+```{r vst, include=FALSE}
+
+vsd = DESeq2::vst(dds,blind=FALSE)
+
+````
+
+Comprobamos el efecto de la transformación con el siguiente gráfico:
+
+```{r vsd plot, echo=FALSE}
+
+meansdplot = vsn::meanSdPlot(SummarizedExperiment::assay(vsd))
+
+````
+
+Tras esto, comprobamos las similitudes entre los pacientes analizados con un gráfico pheatmap:
+
+```{r dist, include=FALSE}
+
+sampleDists = dist(t(SummarizedExperiment::assay(vsd)))
+sampleDists
+````
+
+```{r pheatmap, echo=FALSE, results='hide'}
+
+sampleDistMatrix = as.matrix( sampleDists )
+rownames(sampleDistMatrix) = vsd$Sample_Name
+colnames(sampleDistMatrix) = NULL
+colors = colorRampPalette( rev(RColorBrewer::brewer.pal(9, "Greens")) )(255)
+pheatmap::pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = viridis::viridis(255))
+
+```
+
+Procedemos a realizar los análisis de expresión diferencial entre los diferentes grupos del dataset. Primero, realizamos la comparación de los grupos NIT y SFI. Vamos a fijar un valor de alpha de 0.05 y un threshold para el valor de log2FC de 0.5. 
+
+```{r deseq2, include=FALSE,message=FALSE}
+
+dds = DESeq2::DESeq(dds, parallel =TRUE)
+results.group = data.frame(DESeq2::results(dds))
+
+````
+
+```{r res deseq2, echo=FALSE, message=FALSE}
+
+res1 = DESeq2::results(dds, contrast=c("Group","NIT","SFI"),alpha = 0.05)
+
+summary(res1)
+
+````
+
+Como vemos, estos valores son bastantes restrictivos, pero nos permite ver que hay 277 genes downregulated para esta comparación. 
+
+```{r resig1, echo=FALSE}
+
+resSig1 = subset(res1, padj < 0.05)
+knitr::kable(head(resSig1[ order(resSig1$log2FoldChange), ]))
+
+````
+
+Vemos como los genes más alterados tienen un valor inferior a -5, lo que quiere decir que están muy infraexpresados para el grupo SFI en comparación con el grupo NIT. Para observar mejor los resultados obtenidos, representamos los genes en un volcano plot según sus valores de FoldChange y p-value:
+
+```{r volcano plot 1, echo=FALSE,message=FALSE}
+
+library(EnhancedVolcano)
+
+volcanoplot1 = EnhancedVolcano(resSig1,
+    lab = rownames(resSig1),
+    x = 'log2FoldChange',
+    y = 'pvalue',
+    xlim = c(-5, 8))+ggtitle("NIT vs. SFI")
+
+volcanoplot1 + viridis::scale_color_viridis(discrete=TRUE)
+
+````
+
+Realizamos de nuevo el análisis de expresión diferencial, en esta caso para los grupos NIT y ELI:
+
+```{r res 2, echo=FALSE}
+
+res2 = DESeq2::results(dds, contrast=c("Group","NIT","ELI"),alpha = 0.05)
+summary(res2)
+
+````
+
+Vemos como para este caso, con un p-value de 0.05, el número de genes alterados es mucho mayor, llegando a ser de 4939 genes totales, de los cuales 1476 estaban upregulated y 3463, downregulated. Vemos los primeros genes ordenados según su FoldChange. En primer lugar, los que presentan una expresión menor:
+
+```{r resig2, echo=FALSE}
+
+resSig2 = subset(res2, padj < 0.05)
+knitr::kable(head(resSig2[ order(resSig2$log2FoldChange), ]))
+
+````
+
+En este caso, los valores de FoldChange también son muy bajos, estando algunos por deabjo de un valor de 8. Esto quiere decir que estos genes tienen una expresión mucho menor en el grupo ELI en comparación con el NIT. Observarmos los genes ordenadors ascendentemente:
+
+```{r resig2b, echo=FALSE}
+
+knitr::kable(head(resSig2[ order(resSig2$log2FoldChange,decreasing=TRUE), ]))
+
+````
+
+En este caso, los genes más diferencitalmente expresados tienen unos valores superiores a 3, lo cual quiere decir que también se encuentran muy alterados, pero no tanto como los anteriores. Respresentamos estos resultados en un volcano plot:
+
+```{r volcano plot 2, echo=FALSE,message=FALSE}
+
+library(EnhancedVolcano)
+
+volcanoplot2 = EnhancedVolcano(resSig2,
+    lab = rownames(resSig2),
+    x = 'log2FoldChange',
+    y = 'pvalue',
+    xlim = c(-5, 8))+ggtitle("NIT vs. ELI")
+
+volcanoplot2 + viridis::scale_color_viridis(discrete=TRUE)
+
+````
+
+Por último, comparamos los dos grupos restantes, SFI vs. ELI:
+
+```{r res deseq2 3, echo=FALSE}
+
+res3 = DESeq2::results(dds, contrast=c("Group","SFI","ELI"),alpha = 0.05)
+summary(res3)
+
+````
+
+En este caso, observamos unicamente 80 genes totales significativamente alterados, de los cuales 26 estaban upregulated y 54 downregulated. Analizamos los genes más diferencialmente expresados, en primer lugar los que tienen menor expresión para ELI:
+
+```{r resig3, echo=FALSE}
+
+resSig3 = subset(res3, padj < 0.05)
+knitr::kable(head(resSig3[ order(resSig3$log2FoldChange), ]))
+
+````
+
+Vemos que también los genes más diferencialmente expresados tienen valores inferiores a 3. Comprobamos los más sobreexpresados:
+
+```{r resig3b, echo=FALSE}
+
+knitr::kable(head(resSig3[order(resSig3$log2FoldChange,decreasing=TRUE),]))
+
+````
+
+En este caso, observamos la misma tendencia de genes con valores altos de FoldChange, superior a 3. Sin embargo, hemos visto como hay un menor número de genes alterados para esta comparación, en contraste con lo obtenido en el anterior análisis. Obtenemos el volcano plot para esta comparación:
+
+```{r volcano plot 3, echo=FALSE,message=FALSE}
+
+library(EnhancedVolcano)
+
+volcanoplot3 = EnhancedVolcano(resSig3,
+    lab = rownames(resSig3),
+    x = 'log2FoldChange',
+    y = 'pvalue',
+    xlim = c(-5, 8))+ggtitle("SFI vs. ELI")
+
+volcanoplot3 + viridis::scale_color_viridis(discrete=TRUE)
+
+````
+
+Para todos los análisis de expresión diferencial hechos, el porcentaje de genes con conteos bajos es relativamente grande (más del 30%).  
+
+Una vez tenemos los resultados de nuestros análisis de expresión diferencial, procedemos a realizar la anotación de los resultados. Observamos que la anotación original de los genes facilitada es de tipo ENSEMBL, pero con la particularidad de que tiene anotada la versión de ENSEMBL, por lo que para facilitar la anotación, eliminaremos el punto y el número que lo sigue. Para la anotación, utilizamos el paquete `AnnotationDbi` y la anotación `org.Hs.eg.db`. Utilizamos el siguiente código para la anotación. 
+
+```{r anotación 1,message=FALSE}
+
+rownames(resSig1) = gsub("\\..*","",rownames(resSig1))
+resSig1$symbol = AnnotationDbi::mapIds(org.Hs.eg.db::org.Hs.eg.db,
+                     keys=row.names(resSig1),
+                     column="SYMBOL",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+resSig1$entrez = AnnotationDbi::mapIds(org.Hs.eg.db::org.Hs.eg.db,
+                     keys=row.names(resSig1),
+                     column="ENTREZID",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+
+````
+
+Realizamos la anotación para los resultados de los otros dos análisis de expresión diferencial de la misma forma que el anterior apartado.
+
+```{r anotación 2, include=FALSE}
+
+rownames(resSig2) = gsub("\\..*","",rownames(resSig2))
+resSig2$symbol = AnnotationDbi::mapIds(org.Hs.eg.db::org.Hs.eg.db,
+                     keys=row.names(resSig2),
+                     column="SYMBOL",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+resSig2$entrez = AnnotationDbi::mapIds(org.Hs.eg.db::org.Hs.eg.db,
+                     keys=row.names(resSig2),
+                     column="ENTREZID",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+
+rownames(resSig3) = gsub("\\..*","",rownames(resSig3))
+resSig3$symbol = AnnotationDbi::mapIds(org.Hs.eg.db::org.Hs.eg.db,
+                     keys=row.names(resSig3),
+                     column="SYMBOL",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+resSig3$entrez = AnnotationDbi::mapIds(org.Hs.eg.db::org.Hs.eg.db,
+                     keys=row.names(resSig3),
+                     column="ENTREZID",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+
+````
+
+Tras la anotación, podemos volver a obtener los volcano plots con la anotación realizada, para observar de manera más clara los genes que se encuentran alterados para cada comparación:
+
+```{r volcano plot annotated, echo=FALSE,message=FALSE}
+
+library(EnhancedVolcano)
+
+volcanoplot1an = EnhancedVolcano(resSig1,
+    lab = resSig1$symbol,
+    x = 'log2FoldChange',
+    y = 'pvalue',
+    xlim = c(-5, 8))+ggtitle("NIT vs. ELI")
+
+volcanoplot1an + viridis::scale_color_viridis(discrete=TRUE)
+
+volcanoplot2an = EnhancedVolcano(resSig2,
+    lab = resSig2$symbol,
+    x = 'log2FoldChange',
+    y = 'pvalue',
+    xlim = c(-5, 8))+ggtitle("NIT vs. SFI")
+
+volcanoplot2an + viridis::scale_color_viridis(discrete=TRUE)
+
+volcanoplot3an = EnhancedVolcano(resSig3,
+    lab = resSig3$symbol,
+    x = 'log2FoldChange',
+    y = 'pvalue',
+    xlim = c(-5, 8))+ggtitle("SFI vs. ELI")
+
+volcanoplot3an + viridis::scale_color_viridis(discrete=TRUE)
+
+````
+
+Comprobamos cómo se agrupan las muestras con uno gráficos PCA y MDS según su perfil de expresión transcripcional:
+
+```{r pca, echo=FALSE}
+
+DESeq2::plotPCA(vsd,intgroup="Group") + viridis::scale_color_viridis(discrete=TRUE) + ggplot2::ggtitle("PCA plot por grupos")
+
+````
+
+Vemos cómo las muestras correspondientes al grupo NIT se situan en el lado derecho del gráfico, mientras que las del grupo ELI se situan en el lado izquierdo del mismo. Las muestras del grupo SFI se situan por todo el gráfico. 
+
+Otra forma de representar los datos es con un gráfico Multidimensional Scalling (MDS). En el siguiente representamos las variables Group y sex:
+
+```{r mds plot, echo=FALSE}
+
+mds_1 = as.data.frame(SummarizedExperiment::colData(vsd))
+mds = cbind(mds_1,cmdscale(sampleDistMatrix))
+ggplot2::ggplot(mds, ggplot2::aes(x = `1`, y = `2`, color = Group,shape=sex)) +
+  ggplot2::geom_point(size = 3) + ggplot2::coord_fixed() + viridis::scale_color_viridis(discrete=TRUE) + ggplot2::ggtitle("MDS por grupo y sexo")
+
+````
+
+Tras esto, realizamos un heatmap plot para ver cómo se agrupan las muestras en función de los 20 genes más variables. Vemos cómo las muestras no se agrupan uniformemente a lo largo del árbol jerárquico de la parte superior del gráfico, lo que indica que los 20 genes más variables no son capaces de separar las distintas poblaciones correctamente. 
+
+```{r clustering, echo=FALSE,message=FALSE}
+
+library("genefilter")
+topVarGenes = head(order(rowVars(SummarizedExperiment::assay(vsd)), decreasing = TRUE), 20)
+
+mat  = SummarizedExperiment::assay(vsd)[topVarGenes, ]
+mat  = mat - rowMeans(mat)
+anno = as.data.frame(SummarizedExperiment::colData(vsd)[, c("Sample_Name","Group")])
+ann_colors = list(
+    Group = c(ELI="#440154FF",NIT="#21908CFF",SFI="#FDE725FF"))
+
+pheatmap::pheatmap(mat, annotation_col = anno,color=viridis::viridis(200),annotation_colors = ann_colors,fontsize = 8)
+
+````
+
+Además, comprobamos la cantidad de genes alterados compartidos entre las tres comparaciones realizadas con un diagrama de Venn. Vemos como hay una gran cantidad de genes compartidos entre las comparaciones NIT vs. SFI y NIT vs. ELi (858 genes comunes), y que para el resto de comparaciones hay un número mucho menor. Además, solamente 7 genes están alterados para las tres comparaciones en común. 
+
+```{undefined echo=FALSE}
+
+venn_data = data.frame(NITvs.SFI = res1$padj<0.05, NITvs.ELI = res2$padj<0.05,SFIvs.ELI = res3$padj<0.05)
+limma::vennDiagram(venn_data,circle.col = viridis::viridis(3),cex=1,main="Diagrama de Venn de las comparaciones realizadas \n (p-value adjusted <0.05)")
+
+````
+
+Finalmente, realizamos un Gene Set Enrichment Analysis, y para eso recurrimos al paquete `clusterProfiler`. Utilizamos la base de datos Gene Ontology (GO) para hacer la anotación funcional. Obtenemos un gráfico dotplot para cada comparación para poder ver gráficamente los resultados obtenidos:
+
+```{r cluster prof, echo=FALSE,message=FALSE}
+
+topAnnotated_resSig1 = as.data.frame(resSig1[order(abs(resSig1$log2FoldChange),decreasing=TRUE),])
+whichGenes_resSig1= topAnnotated_resSig1[topAnnotated_resSig1$padj<0.05,]
+EntrezIDs_resSig1 = topAnnotated_resSig1$entrez
+
+resSig1_cluProf = clusterProfiler::enrichGO(EntrezIDs_resSig1, OrgDb=org.Hs.eg.db::org.Hs.eg.db, pvalueCutoff=1, qvalueCutoff=1)
+
+enrichplot::dotplot(resSig1_cluProf, showCategory=15, title="Funciones más representadas en el listado de genes alterados \n NIT vs. SFI",font.size=10)+ viridis::scale_color_viridis(direction=-1)
+
+topAnnotated_resSig2 = as.data.frame(resSig2[order(abs(resSig2$log2FoldChange),decreasing=TRUE),])
+whichGenes_resSig2= topAnnotated_resSig2[topAnnotated_resSig2$padj<0.05,]
+EntrezIDs_resSig2 = topAnnotated_resSig2$entrez
+
+resSig2_cluProf = clusterProfiler::enrichGO(EntrezIDs_resSig2, OrgDb=org.Hs.eg.db::org.Hs.eg.db, pvalueCutoff=1, qvalueCutoff=1)
+
+enrichplot::dotplot(resSig2_cluProf, showCategory=15, title="Funciones más representadas en el listado de genes alterados \n NIT vs. ELI",font.size=10)+ viridis::scale_color_viridis(direction=-1)
+
+topAnnotated_resSig3 = as.data.frame(resSig3[order(abs(resSig3$log2FoldChange),decreasing=TRUE),])
+whichGenes_resSig3= topAnnotated_resSig3[topAnnotated_resSig3$padj<0.05,]
+EntrezIDs_resSig3 = topAnnotated_resSig3$entrez
+
+resSig3_cluProf = clusterProfiler::enrichGO(EntrezIDs_resSig3, OrgDb=org.Hs.eg.db::org.Hs.eg.db, pvalueCutoff=1, qvalueCutoff=1)
+
+enrichplot::dotplot(resSig3_cluProf, showCategory=15, title="Funciones más representadas en el listado de genes alterados \n NIT vs. ELI",font.size=10)+ viridis::scale_color_viridis(direction=-1)
+
+````
+
+# 5. Discusión.
+
+Al tratarse de un estudio que analiza muestras aleatorias seleccionadas de una muestra general más amplia, la selección de las muestras puede alterar los resultados obtenidos y derivar en conclusiones sesgadas. 10 pacientes por cada grupo es un número relativamente bajo. Además, la aleatorización de las muestras puede dar en resultados sin mucho sentido, de los que se pueden derivar resultados irreales.
+
+# 6. Conclusión.
+
+Podemos hacer una pequeña valoración biológica al observar los resultados obtenidos para los análisis de expresión diferencial y los GSEA. Vemos cómo para los contrastes en los que se tiene el grupo NIT como grupo control se obtienen un mayor número de genes alterados. Esto se puede deber a que el grupo NIT es el grupo sin tejidos infiltrados, por lo que podríamos considerarlo como el grupo basal o de referencia. Los otros dos grupos (SFI y ELI) presentan diferentes tipos de infiltraciones, por lo que podemos asumir que serían los grupos alterados o patológicos. Cuando observamos los resultados de la comparación SFI vs. ELI, vemos que hay un menor número de genes alterados, por lo que podemos asumir que el patrón de expresión entre estos grupos es más similar. 
+
+En cuanto a los resultados obtenidos del GSEA, podemos destacar que se obtienen diferentes rutas alteradas ligadas a uniones entre proteinas y de diferentes receptores para el grupo SFI, y relacionadas con la actividad GTPasa para el grupo ELI. 
+
+\newpage
+
+# Lista de figuras y tablas
+
+
+
+# References
+
+<div id="refs"></div>
+
+# Apéndice (código)
+
+```{code}
+
+# counts = read.csv(file = "./counts.csv",sep=";")
+# targets = read.csv(file="./targets.csv",sep=",")
+# 
+# rownames(counts) = counts$X
+# counts = counts[-1]
+# 
+# targets$Sample_Name = gsub("-",".",targets$Sample_Name)
+# rownames(targets) = targets$Sample_Name
+# 
+# set.seed(12345)
+# 
+# select_NIT = targets[targets$Group == "NIT",]
+# random_NIT = as.character(sample(select_NIT$Sample_Name,10))
+# 
+# select_ELI = targets[targets$Group == "ELI",]
+# random_ELI = as.character(sample(select_ELI$Sample_Name,10))
+# 
+# select_SFI = targets[targets$Group == "SFI",]
+# random_SFI = as.character(sample(select_SFI$Sample_Name,10))
+# 
+# all_select = c(random_NIT,random_ELI,random_SFI)
+# 
+# 
+# counts_sel = counts[all_select]
+# counts_sel = counts_sel[,order(colnames(counts_sel))]
+# counts_sel = as.matrix(counts_sel)
+# targets_sel = targets[rownames(targets) %in% all_select,]
+# 
+# 
+# ddsMat = DESeq2::DESeqDataSetFromMatrix (countData = counts_sel,
+#                                   colData = targets_sel,
+#                                   design = ~ Group)
+# 
+# dds = ddsMat[rowSums(DESeq2::counts(ddsMat)) > 1, ]
+# 
+# df = log2(DESeq2::counts(dds) + 1)
+# df = reshape2::melt(df, variable_name = "Samples")
+# targets_cond = data.frame(Var2 = targets_sel$Sample_Name,Group = targets_sel$Group)
+# 
+# df_mer = plyr::join(df,targets_cond,by="Var2")
+# 
+# ggplot2::ggplot(df_mer, ggplot2::aes(x = Group,y=value,fill=Group)) + ggplot2::geom_boxplot() + ggplot2::xlab("Muestras") + ggplot2::ylab(expression(log[2](count + 1))) + ggplot2::theme(axis.title.x=element_blank(),axis.text.x=element_blank(), axis.ticks.x=element_blank()) + viridis::scale_fill_viridis(discrete=TRUE)
+# 
+# ggplot2::ggplot(df_mer, ggplot2::aes(x = value, colour = Group, fill=Group)) + ggplot2::ylim(c(0, 0.25)) +
+# ggplot2::geom_density(alpha = 0.2, size = 1.25) + ggplot2::facet_wrap(~ Group) +
+# ggplot2::theme(legend.position = "top") + ggplot2::xlab(expression(log[2](count + 1)))
+# 
+# vsd = DESeq2::vst(dds,blind=FALSE)
+# 
+# meansdplot = vsn::meanSdPlot(SummarizedExperiment::assay(vsd))
+# 
+# sampleDists = dist(t(SummarizedExperiment::assay(vsd)))
+# sampleDists
+# 
+# sampleDistMatrix = as.matrix( sampleDists )
+# rownames(sampleDistMatrix) = vsd$Sample_Name
+# colnames(sampleDistMatrix) = NULL
+# colors = colorRampPalette( rev(RColorBrewer::brewer.pal(9, "Greens")) )(255)
+# pheatmap::pheatmap(sampleDistMatrix,
+#          clustering_distance_rows = sampleDists,
+#          clustering_distance_cols = sampleDists,
+#          col = viridis::viridis(255))
+# 
+# dds = DESeq2::DESeq(dds, parallel =TRUE)
+# results.group = data.frame(DESeq2::results(dds))
+# 
+# res1 = DESeq2::results(dds, contrast=c("Group","NIT","SFI"),alpha = 0.05)
+# 
+# summary(res1)
+# 
+# resSig1 = subset(res1, padj < 0.05)
+# knitr::kable(head(resSig1[ order(resSig1$log2FoldChange), ]))
+# 
+# library(EnhancedVolcano)
+# 
+# volcanoplot1 = EnhancedVolcano(resSig1,
+#     lab = rownames(resSig1),
+#     x = 'log2FoldChange',
+#     y = 'pvalue',
+#     xlim = c(-5, 8))+ggtitle("NIT vs. SFI")
+# 
+# volcanoplot1 + viridis::scale_color_viridis(discrete=TRUE)
+# 
+# res2 = DESeq2::results(dds, contrast=c("Group","NIT","ELI"),alpha = 0.05)
+# summary(res2)
+# 
+# resSig2 = subset(res2, padj < 0.05)
+# knitr::kable(head(resSig2[ order(resSig2$log2FoldChange), ]))
+# 
+# knitr::kable(head(resSig2[ order(resSig2$log2FoldChange,decreasing=TRUE), ]))
+# 
+# library(EnhancedVolcano)
+# 
+# volcanoplot2 = EnhancedVolcano(resSig2,
+#     lab = rownames(resSig2),
+#     x = 'log2FoldChange',
+#     y = 'pvalue',
+#     xlim = c(-5, 8))+ggtitle("NIT vs. ELI")
+# 
+# volcanoplot2 + viridis::scale_color_viridis(discrete=TRUE)
+# 
+# 
+# res3 = DESeq2::results(dds, contrast=c("Group","SFI","ELI"),alpha = 0.05)
+# summary(res3)
+# 
+# resSig3 = subset(res3, padj < 0.05)
+# knitr::kable(head(resSig3[ order(resSig3$log2FoldChange), ]))
+# 
+# knitr::kable(head(resSig3[order(resSig3$log2FoldChange,decreasing=TRUE),]))
+# 
+# library(EnhancedVolcano)
+# 
+# volcanoplot3 = EnhancedVolcano(resSig3,
+#     lab = rownames(resSig3),
+#     x = 'log2FoldChange',
+#     y = 'pvalue',
+#     xlim = c(-5, 8))+ggtitle("SFI vs. ELI")
+# 
+# volcanoplot3 + viridis::scale_color_viridis(discrete=TRUE)
+# 
+# rownames(resSig1) = gsub("\\..*","",rownames(resSig1))
+# resSig1$symbol = AnnotationDbi::mapIds(org.Hs.eg.db::org.Hs.eg.db,
+#                      keys=row.names(resSig1),
+#                      column="SYMBOL",
+#                      keytype="ENSEMBL",
+#                      multiVals="first")
+# resSig1$entrez = AnnotationDbi::mapIds(org.Hs.eg.db::org.Hs.eg.db,
+#                      keys=row.names(resSig1),
+#                      column="ENTREZID",
+#                      keytype="ENSEMBL",
+#                      multiVals="first")
+# 
+# rownames(resSig2) = gsub("\\..*","",rownames(resSig2))
+# resSig2$symbol = AnnotationDbi::mapIds(org.Hs.eg.db::org.Hs.eg.db,
+#                      keys=row.names(resSig2),
+#                      column="SYMBOL",
+#                      keytype="ENSEMBL",
+#                      multiVals="first")
+# resSig2$entrez = AnnotationDbi::mapIds(org.Hs.eg.db::org.Hs.eg.db,
+#                      keys=row.names(resSig2),
+#                      column="ENTREZID",
+#                      keytype="ENSEMBL",
+#                      multiVals="first")
+# 
+# rownames(resSig3) = gsub("\\..*","",rownames(resSig3))
+# resSig3$symbol = AnnotationDbi::mapIds(org.Hs.eg.db::org.Hs.eg.db,
+#                      keys=row.names(resSig3),
+#                      column="SYMBOL",
+#                      keytype="ENSEMBL",
+#                      multiVals="first")
+# resSig3$entrez = AnnotationDbi::mapIds(org.Hs.eg.db::org.Hs.eg.db,
+#                      keys=row.names(resSig3),
+#                      column="ENTREZID",
+#                      keytype="ENSEMBL",
+#                      multiVals="first")
+# 
+# library(EnhancedVolcano)
+# 
+# volcanoplot1an = EnhancedVolcano(resSig1,
+#     lab = resSig1$symbol,
+#     x = 'log2FoldChange',
+#     y = 'pvalue',
+#     xlim = c(-5, 8))+ggtitle("NIT vs. ELI")
+# 
+# volcanoplot1an + viridis::scale_color_viridis(discrete=TRUE)
+# 
+# volcanoplot2an = EnhancedVolcano(resSig2,
+#     lab = resSig2$symbol,
+#     x = 'log2FoldChange',
+#     y = 'pvalue',
+#     xlim = c(-5, 8))+ggtitle("NIT vs. SFI")
+# 
+# volcanoplot2an + viridis::scale_color_viridis(discrete=TRUE)
+# 
+# volcanoplot3an = EnhancedVolcano(resSig3,
+#     lab = resSig3$symbol,
+#     x = 'log2FoldChange',
+#     y = 'pvalue',
+#     xlim = c(-5, 8))+ggtitle("SFI vs. ELI")
+# 
+# volcanoplot3an + viridis::scale_color_viridis(discrete=TRUE)
+# 
+# DESeq2::plotPCA(vsd,intgroup="Group") + viridis::scale_color_viridis(discrete=TRUE) + ggplot2::ggtitle("PCA plot por grupos")
+# 
+# mds_1 = as.data.frame(SummarizedExperiment::colData(vsd))
+# mds = cbind(mds_1,cmdscale(sampleDistMatrix))
+# ggplot2::ggplot(mds, ggplot2::aes(x = `1`, y = `2`, color = Group,shape=sex)) +
+#   ggplot2::geom_point(size = 3) + ggplot2::coord_fixed() + viridis::scale_color_viridis(discrete=TRUE) + ggplot2::ggtitle("MDS por grupo y sexo")
+# 
+# library("genefilter")
+# topVarGenes = head(order(rowVars(SummarizedExperiment::assay(vsd)), decreasing = TRUE), 20)
+# 
+# mat  = SummarizedExperiment::assay(vsd)[topVarGenes, ]
+# mat  = mat - rowMeans(mat)
+# anno = as.data.frame(SummarizedExperiment::colData(vsd)[, c("Sample_Name","Group")])
+# ann_colors = list(
+#     Group = c(ELI="#440154FF",NIT="#21908CFF",SFI="#FDE725FF"))
+# 
+# pheatmap::pheatmap(mat, annotation_col = anno,color=viridis::viridis(200),annotation_colors = ann_colors,fontsize = 8)
+# 
+# # venn_data = data.frame(NITvs.SFI = res1$padj<0.05, NITvs.ELI = res2$padj<0.05,SFIvs.ELI = res3$padj<0.05)
+# # limma::vennDiagram(venn_data,circle.col = viridis::viridis(3),cex=1,main="Diagrama de Venn de las comparaciones realizadas \n (p-value adjusted <0.05)")
+# 
+# topAnnotated_resSig1 = as.data.frame(resSig1[order(abs(resSig1$log2FoldChange),decreasing=TRUE),])
+# whichGenes_resSig1= topAnnotated_resSig1[topAnnotated_resSig1$padj<0.05,]
+# EntrezIDs_resSig1 = topAnnotated_resSig1$entrez
+# 
+# resSig1_cluProf = clusterProfiler::enrichGO(EntrezIDs_resSig1, OrgDb=org.Hs.eg.db::org.Hs.eg.db, pvalueCutoff=1, qvalueCutoff=1)
+# 
+# enrichplot::dotplot(resSig1_cluProf, showCategory=15, title="Funciones más representadas en el listado de genes alterados \n NIT vs. SFI",font.size=10)+ viridis::scale_color_viridis(direction=-1)
+# 
+# topAnnotated_resSig2 = as.data.frame(resSig2[order(abs(resSig2$log2FoldChange),decreasing=TRUE),])
+# whichGenes_resSig2= topAnnotated_resSig2[topAnnotated_resSig2$padj<0.05,]
+# EntrezIDs_resSig2 = topAnnotated_resSig2$entrez
+# 
+# resSig2_cluProf = clusterProfiler::enrichGO(EntrezIDs_resSig2, OrgDb=org.Hs.eg.db::org.Hs.eg.db, pvalueCutoff=1, qvalueCutoff=1)
+# 
+# enrichplot::dotplot(resSig2_cluProf, showCategory=15, title="Funciones más representadas en el listado de genes alterados \n NIT vs. ELI",font.size=10)+ viridis::scale_color_viridis(direction=-1)
+# 
+# topAnnotated_resSig3 = as.data.frame(resSig3[order(abs(resSig3$log2FoldChange),decreasing=TRUE),])
+# whichGenes_resSig3= topAnnotated_resSig3[topAnnotated_resSig3$padj<0.05,]
+# EntrezIDs_resSig3 = topAnnotated_resSig3$entrez
+# 
+# resSig3_cluProf = clusterProfiler::enrichGO(EntrezIDs_resSig3, OrgDb=org.Hs.eg.db::org.Hs.eg.db, pvalueCutoff=1, qvalueCutoff=1)
+# 
+# enrichplot::dotplot(resSig3_cluProf, showCategory=15, title="Funciones más representadas en el listado de genes alterados \n NIT vs. ELI",font.size=10)+ viridis::scale_color_viridis(direction=-1)
+
+````
